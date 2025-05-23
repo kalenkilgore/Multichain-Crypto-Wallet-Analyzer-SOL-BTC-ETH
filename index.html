@@ -161,11 +161,28 @@
 
             document.getElementById('resultWallet').textContent = data.wallet;
             document.getElementById('resultReceived').textContent = `${data.received} ${data.coin}`;
-            document.getElementById('resultReceivedUsd').textContent = `($${data.receivedUsd})`;
+            document.getElementById('resultReceivedUsd').textContent = data.receivedUsd.startsWith('Price') ? data.receivedUsd : `($${data.receivedUsd})`;
             document.getElementById('resultSent').textContent = `${data.sent} ${data.coin}`;
-            document.getElementById('resultSentUsd').textContent = `($${data.sentUsd})`;
+            document.getElementById('resultSentUsd').textContent = data.sentUsd.startsWith('Price') ? data.sentUsd : `($${data.sentUsd})`;
             document.getElementById('resultNet').textContent = `${data.net} ${data.coin}`;
-            document.getElementById('resultNetUsd').textContent = `($${data.netUsd})`;
+            document.getElementById('resultNetUsd').textContent = data.netUsd.startsWith('Price') ? data.netUsd : `($${data.netUsd})`;
+
+            // Show warning if present
+            const warningDiv = document.getElementById('warning') || createWarningDiv();
+            if (data.warning) {
+                warningDiv.textContent = data.warning;
+                warningDiv.classList.remove('hidden');
+            } else {
+                warningDiv.classList.add('hidden');
+            }
+        }
+
+        function createWarningDiv() {
+            const warningDiv = document.createElement('div');
+            warningDiv.id = 'warning';
+            warningDiv.className = 'mt-4 p-4 bg-yellow-800 bg-opacity-50 rounded-lg text-yellow-200 text-sm';
+            document.getElementById('results').appendChild(warningDiv);
+            return warningDiv;
         }
 
         function showLoading() {

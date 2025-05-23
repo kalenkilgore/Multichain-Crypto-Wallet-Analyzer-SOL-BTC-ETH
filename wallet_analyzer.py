@@ -2,6 +2,8 @@ import os
 import requests
 import argparse
 from dotenv import load_dotenv
+import time
+from datetime import datetime, timedelta
 
 # Load Moralis API key from .env
 load_dotenv()
@@ -10,6 +12,10 @@ MORALIS_API_KEY = os.getenv('MORALIS_API_KEY')
 if not MORALIS_API_KEY:
     print('Moralis API key not found in .env file.')
     exit(1)
+
+# Cache for crypto prices
+price_cache = {}
+CACHE_DURATION = 300  # 5 minutes in seconds
 
 # Supported chains mapping for Moralis
 CHAIN_MAP = {
@@ -31,6 +37,21 @@ headers = {
     'X-API-Key': MORALIS_API_KEY
 }
 
+def get_cached_price(coin_id):
+    """Get price from cache if available and not expired"""
+    if coin_id in price_cache:
+        cached_data = price_cache[coin_id]
+        if datetime.now() - cached_data['timestamp'] < timedelta(seconds=CACHE_DURATION):
+            return cached_data['price']
+    return None
+
+def set_cached_price(coin_id, price):
+    """Set price in cache with current timestamp"""
+    price_cache[coin_id] = {
+        'price': price,
+        'timestamp': datetime.now()
+    }
+
 def get_btc_transactions(wallet):
     """Get Bitcoin transactions using BlockCypher API"""
     url = f"{BLOCKCYPHER_API}/addrs/{wallet}"
@@ -45,22 +66,27 @@ def get_btc_transactions(wallet):
         exit(1)
 
 def get_btc_price():
-    """Get Bitcoin price using BlockCypher API"""
-    try:
-        # Using CoinGecko API for reliable BTC price
-        url = "https://api.coingecko.com/api/v3/simple/price"
-        params = {
-            'ids': 'bitcoin',
-            'vs_currencies': 'usd'
-        }
-        resp = requests.get(url, params=params)
-        if resp.status_code != 200:
-            print(f'Error fetching BTC price (status {resp.status_code}): {resp.text}')
-            exit(1)
-        return float(resp.json()['bitcoin']['usd'])
-    except Exception as e:
-        print(f'Error fetching BTC price: {e}')
-        exit(1)
+    """Get Bitcoin price using multiple sources with caching"""
+    cached_price = get_cached_price('bitcoin')
+    if cached_price is not None:
+        return cached_price
+
+    sources = [
+        lambda: requests.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd").json()['bitcoin']['usd'],
+        lambda: float(requests.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT").json()['price']),
+        lambda: float(requests.get("https://api.coinbase.com/v2/prices/BTC-USD/spot").json()['data']['amount'])
+    ]
+
+    for get_price in sources:
+        try:
+            price = get_price()
+            set_cached_price('bitcoin', price)
+            return price
+        except Exception as e:
+            continue
+
+    # If all sources fail, return a default price or raise an error
+    raise Exception("Unable to fetch BTC price from any source")
 
 def analyze_btc_transactions(wallet):
     """Analyze Bitcoin transactions"""
@@ -286,56 +312,79 @@ def get_token_price(chain, address):
     return resp.json()['usdPrice']
 
 def get_native_price(wallet, chain, coin_symbol):
-    """Get native token price from Moralis API"""
-    url = f'https://deep-index.moralis.io/api/v2.2/erc20/{wallet}/price'
-    params = {
-        'chain': chain
-    }
+    """Get native token price from multiple sources with caching"""
+    coin_id = coin_symbol.lower()
+    cached_price = get_cached_price(coin_id)
+    if cached_price is not None:
+        return cached_price
+
+    # Try Moralis first
     try:
+        url = f'https://deep-index.moralis.io/api/v2.2/erc20/{wallet}/price'
+        params = {'chain': chain}
         resp = requests.get(url, headers=headers, params=params)
-        if resp.status_code != 200:
-            # Fallback to CoinGecko for price
-            coingecko_url = "https://api.coingecko.com/api/v3/simple/price"
-            coin_id = 'ethereum' if coin_symbol == 'ETH' else coin_symbol.lower()
-            params = {
-                'ids': coin_id,
-                'vs_currencies': 'usd'
-            }
-            resp = requests.get(coingecko_url, params=params)
-            if resp.status_code != 200:
-                print(f'Error fetching price data: {resp.text}')
-                exit(1)
-            return float(resp.json()[coin_id.lower()]['usd'])
-        return float(resp.json().get('usdPrice', 0))
-    except Exception as e:
-        print(f'Error fetching native price: {e}')
-        exit(1)
+        if resp.status_code == 200:
+            price = float(resp.json().get('usdPrice', 0))
+            if price > 0:
+                set_cached_price(coin_id, price)
+                return price
+    except Exception:
+        pass
+
+    # Fallback sources
+    sources = [
+        lambda: requests.get(f"https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd").json()[coin_id]['usd'],
+        lambda: float(requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={coin_symbol}USDT").json()['price']),
+        lambda: float(requests.get(f"https://api.coinbase.com/v2/prices/{coin_symbol}-USD/spot").json()['data']['amount'])
+    ]
+
+    for get_price in sources:
+        try:
+            price = get_price()
+            set_cached_price(coin_id, price)
+            return price
+        except Exception:
+            continue
+
+    # If all sources fail, return a default price or raise an error
+    raise Exception(f"Unable to fetch {coin_symbol} price from any source")
 
 def get_sol_price(wallet):
-    """Get SOL price from Moralis Solana API"""
+    """Get SOL price from multiple sources with caching"""
+    cached_price = get_cached_price('solana')
+    if cached_price is not None:
+        return cached_price
+
+    # Try Moralis first
     try:
-        # First try Moralis Solana gateway for SOL price
         url = 'https://solana-gateway.moralis.io/token/mainnet/So11111111111111111111111111111111111111112/price'
         resp = requests.get(url, headers=headers)
         if resp.status_code == 200:
             price_data = resp.json()
             if 'usdPrice' in price_data:
-                return float(price_data['usdPrice'])
-            
-        # Fallback to CoinGecko if Moralis fails
-        coingecko_url = "https://api.coingecko.com/api/v3/simple/price"
-        params = {
-            'ids': 'solana',
-            'vs_currencies': 'usd'
-        }
-        resp = requests.get(coingecko_url, params=params)
-        if resp.status_code != 200:
-            print(f'Error fetching SOL price data: {resp.text}')
-            exit(1)
-        return float(resp.json()['solana']['usd'])
-    except Exception as e:
-        print(f'Error fetching SOL price: {str(e)}')
-        exit(1)
+                price = float(price_data['usdPrice'])
+                set_cached_price('solana', price)
+                return price
+    except Exception:
+        pass
+
+    # Fallback sources
+    sources = [
+        lambda: requests.get("https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd").json()['solana']['usd'],
+        lambda: float(requests.get("https://api.binance.com/api/v3/ticker/price?symbol=SOLUSDT").json()['price']),
+        lambda: float(requests.get("https://api.coinbase.com/v2/prices/SOL-USD/spot").json()['data']['amount'])
+    ]
+
+    for get_price in sources:
+        try:
+            price = get_price()
+            set_cached_price('solana', price)
+            return price
+        except Exception:
+            continue
+
+    # If all sources fail, return a default price or raise an error
+    raise Exception("Unable to fetch SOL price from any source")
 
 def analyze_transactions(wallet, coin_symbol, chain, limit=100):
     if coin_symbol == 'BTC':

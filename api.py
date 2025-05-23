@@ -55,28 +55,49 @@ def analyze_wallet():
         else:
             chain = CHAIN_MAP[coin]
 
-        # Analyze transactions with limit
-        inflow, outflow, price, decimals = analyze_transactions(wallet, coin, chain, limit)
-        inflow_usd = inflow * price
-        outflow_usd = outflow * price
-        net_amount = inflow - outflow
-        net_usd = inflow_usd - outflow_usd
+        try:
+            # Analyze transactions with limit
+            inflow, outflow, price, decimals = analyze_transactions(wallet, coin, chain, limit)
+            inflow_usd = inflow * price
+            outflow_usd = outflow * price
+            net_amount = inflow - outflow
+            net_usd = inflow_usd - outflow_usd
 
-        return jsonify({
-            'wallet': wallet,
-            'coin': coin,
-            'received': f'{inflow:.8f}',
-            'receivedUsd': f'{inflow_usd:,.2f}',
-            'sent': f'{outflow:.8f}',
-            'sentUsd': f'{outflow_usd:,.2f}',
-            'net': f'{net_amount:.8f}',
-            'netUsd': f'{net_usd:,.2f}',
-            'transactionsAnalyzed': limit if limit > 0 else 'all'
-        })
+            return jsonify({
+                'wallet': wallet,
+                'coin': coin,
+                'received': f'{inflow:.8f}',
+                'receivedUsd': f'{inflow_usd:,.2f}',
+                'sent': f'{outflow:.8f}',
+                'sentUsd': f'{outflow_usd:,.2f}',
+                'net': f'{net_amount:.8f}',
+                'netUsd': f'{net_usd:,.2f}',
+                'transactionsAnalyzed': limit if limit > 0 else 'all'
+            })
+        except Exception as e:
+            if "Unable to fetch" in str(e):
+                # Price fetching error - return results without USD values
+                return jsonify({
+                    'wallet': wallet,
+                    'coin': coin,
+                    'received': f'{inflow:.8f}',
+                    'receivedUsd': 'Price Unavailable',
+                    'sent': f'{outflow:.8f}',
+                    'sentUsd': 'Price Unavailable',
+                    'net': f'{net_amount:.8f}',
+                    'netUsd': 'Price Unavailable',
+                    'transactionsAnalyzed': limit if limit > 0 else 'all',
+                    'warning': 'Price data temporarily unavailable. USD values could not be calculated.'
+                })
+            else:
+                raise
 
     except Exception as e:
+        error_message = str(e)
+        if "rate limit" in error_message.lower():
+            error_message = "Service is experiencing high demand. Please try again in a few minutes."
         return jsonify({
-            'error': str(e)
+            'error': error_message
         }), 500
 
 if __name__ == '__main__':

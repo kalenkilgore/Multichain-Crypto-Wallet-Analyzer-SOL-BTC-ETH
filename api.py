@@ -5,7 +5,17 @@ from dotenv import load_dotenv
 import requests
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"]}})  # Enable CORS for all routes with specific settings
+CORS(app, resources={
+    r"/*": {
+        "origins": [
+            "http://localhost:8000",
+            "https://kalenkilgore.github.io",
+            "https://multichain-crypto-wallet-analyzer-sol.onrender.com"
+        ],
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization", "Accept"]
+    }
+})
 
 # Load Moralis API key from .env
 load_dotenv()
